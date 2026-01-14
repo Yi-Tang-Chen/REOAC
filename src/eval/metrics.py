@@ -18,8 +18,8 @@ from src.critic.aggregators import FEATURE_DIM
 from src.critic.rel_energy import RelationalEnergyCritic
 from src.operators.definitions import load_operator_specs, operator_ids
 from src.rl.rollout import RolloutEngine
-from src.eval.verifier_gsm8k import grade_gsm8k_answer
-from src.eval.verifier_math import grade_math_answer
+from src.eval.verifier_gsm8k import make_gsm8k_verifier
+from src.eval.verifier_math import make_math_verifier
 
 try:
     from tqdm import tqdm as _tqdm
@@ -67,6 +67,11 @@ def _select_backbone(config: Dict[str, Any]):
     if name == "sedd":
         return SEDDWrapper(backbone_cfg)
     return MDLMWrapper(backbone_cfg)
+
+
+def _resolve_math_parser(config: Dict[str, Any]) -> str:
+    eval_cfg = config.get("eval", {})
+    return str(eval_cfg.get("math_parser", "sympy"))
 
 
 def _load_checkpoints(
@@ -164,7 +169,10 @@ def evaluate(config_path: str, task: str, limit: int = 0, checkpoint_dir: Option
         device=device,
     )
 
-    verifier = grade_gsm8k_answer if task == "gsm8k" else grade_math_answer
+    verifier = make_gsm8k_verifier(mode="strict") if task == "gsm8k" else make_math_verifier(
+        _resolve_math_parser(config),
+        mode="strict",
+    )
 
     correct = 0
     total_cost = 0.0

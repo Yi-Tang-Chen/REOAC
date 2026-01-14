@@ -70,33 +70,89 @@ def compute_backbone_loss(
     device: torch.device,
     advantage_positive: bool = True,
     advantage_clip: float = 0.0,
+    backward: bool = False,
 ) -> torch.Tensor:
-    total_loss = torch.tensor(0.0, device=device)
     total_count = 0
+    for step in steps:
+        if not step.decision.update_positions or not step.target_tokens:
+            continue
+        for pos in step.decision.update_positions:
+            if pos < len(step.target_tokens):
+                total_count += 1
 
+    if total_count == 0:
+        return torch.tensor(0.0, device=device)
+
+    if not backward:
+        with torch.no_grad():
+            total_loss = torch.tensor(0.0, device=device)
+            for step in steps:
+                if not step.decision.update_positions or not step.target_tokens:
+                    continue
+                input_ids = torch.tensor(step.state.tokens, device=device).unsqueeze(0)
+                attention_mask = torch.ones_like(input_ids)
+                context_mask = torch.zeros_like(input_ids)
+                if step.state.prompt_len > 0:
+                    context_mask[0, : step.state.prompt_len] = 1
+                outputs = backbone.forward(
+                    input_ids,
+                    step.state.timestep,
+                    attention_mask=attention_mask,
+                    context_mask=context_mask,
+                )
+                logits = outputs.logits[0]
+                advantage = float(step.return_value)
+                if advantage_positive:
+                    advantage = max(advantage, 0.0)
+                if advantage_clip and advantage_clip > 0:
+                    advantage = max(min(advantage, advantage_clip), -advantage_clip)
+                weight = torch.tensor(advantage, device=device, dtype=torch.float32)
+
+                for pos in step.decision.update_positions:
+                    if pos < len(step.target_tokens):
+                        target = torch.tensor(step.target_tokens[pos], device=device, dtype=torch.long)
+                        loss = F.cross_entropy(logits[pos].unsqueeze(0), target.unsqueeze(0), reduction="none")
+                        total_loss = total_loss + loss * weight
+            return total_loss / total_count
+
+    total_loss_value = 0.0
     for step in steps:
         if not step.decision.update_positions or not step.target_tokens:
             continue
         input_ids = torch.tensor(step.state.tokens, device=device).unsqueeze(0)
-        outputs = backbone.forward(input_ids, step.state.timestep)
+        attention_mask = torch.ones_like(input_ids)
+        context_mask = torch.zeros_like(input_ids)
+        if step.state.prompt_len > 0:
+            context_mask[0, : step.state.prompt_len] = 1
+        outputs = backbone.forward(
+            input_ids,
+            step.state.timestep,
+            attention_mask=attention_mask,
+            context_mask=context_mask,
+        )
         logits = outputs.logits[0]
         advantage = float(step.return_value)
         if advantage_positive:
             advantage = max(advantage, 0.0)
         if advantage_clip and advantage_clip > 0:
             advantage = max(min(advantage, advantage_clip), -advantage_clip)
-        weight = torch.tensor(advantage, device=device, dtype=torch.float32)
+        weight = float(advantage)
+        step_loss = None
 
         for pos in step.decision.update_positions:
             if pos < len(step.target_tokens):
                 target = torch.tensor(step.target_tokens[pos], device=device, dtype=torch.long)
                 loss = F.cross_entropy(logits[pos].unsqueeze(0), target.unsqueeze(0), reduction="none")
-                total_loss = total_loss + loss * weight
-                total_count += 1
+                step_loss = loss if step_loss is None else step_loss + loss
 
-    if total_count == 0:
-        return torch.tensor(0.0, device=device)
-    return total_loss / total_count
+        if step_loss is None:
+            continue
+
+        weighted = step_loss * weight
+        (weighted / total_count).backward()
+        total_loss_value += float(weighted.detach().cpu().item())
+
+    return torch.tensor(total_loss_value / total_count, device=device)
 
 
 def compute_losses(
@@ -108,26 +164,27 @@ def compute_losses(
     device: torch.device,
     config: Dict[str, float],
 ) -> LossMetrics:
-    critic_loss = compute_critic_loss(steps, critic, operator_id_list, device)
-    actor_loss = compute_actor_loss(
-        steps,
-        actor,
-        critic,
-        device,
-        temperature=float(config.get("actor_temperature", 1.0)),
-    )
-    backbone_loss = compute_backbone_loss(
-        steps,
-        backbone,
-        device,
-        advantage_positive=bool(config.get("advantage_positive", True)),
-        advantage_clip=float(config.get("advantage_clip", 0.0)),
-    )
-    total_loss = (
-        float(config.get("critic_weight", 1.0)) * critic_loss
-        + float(config.get("actor_weight", 1.0)) * actor_loss
-        + float(config.get("backbone_weight", 1.0)) * backbone_loss
-    )
+    with torch.no_grad():
+        critic_loss = compute_critic_loss(steps, critic, operator_id_list, device)
+        actor_loss = compute_actor_loss(
+            steps,
+            actor,
+            critic,
+            device,
+            temperature=float(config.get("actor_temperature", 1.0)),
+        )
+        backbone_loss = compute_backbone_loss(
+            steps,
+            backbone,
+            device,
+            advantage_positive=bool(config.get("advantage_positive", True)),
+            advantage_clip=float(config.get("advantage_clip", 0.0)),
+        )
+        total_loss = (
+            float(config.get("critic_weight", 1.0)) * critic_loss
+            + float(config.get("actor_weight", 1.0)) * actor_loss
+            + float(config.get("backbone_weight", 1.0)) * backbone_loss
+        )
     return LossMetrics(
         critic_loss=float(critic_loss.detach().cpu().item()),
         actor_loss=float(actor_loss.detach().cpu().item()),

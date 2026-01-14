@@ -7,7 +7,7 @@ import json
 import os
 import time
 import warnings
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -24,8 +24,8 @@ from src.operators.definitions import load_operator_specs, operator_ids
 from src.rl.buffer import RolloutBuffer
 from src.rl.losses import compute_actor_loss, compute_backbone_loss, compute_critic_loss, compute_losses
 from src.rl.rollout import RolloutEngine
-from src.eval.verifier_gsm8k import grade_gsm8k_answer
-from src.eval.verifier_math import grade_math_answer
+from src.eval.verifier_gsm8k import make_gsm8k_verifier
+from src.eval.verifier_math import make_math_verifier
 
 try:
     from tqdm import tqdm as _tqdm
@@ -90,6 +90,16 @@ def _init_distributed() -> tuple[bool, int, int, int]:
     return True, rank, local_rank, world_size
 
 
+def _resolve_math_parser(config: Dict[str, Any]) -> str:
+    eval_cfg = config.get("eval", {})
+    return str(eval_cfg.get("math_parser", "sympy"))
+
+
+def _resolve_reward_mode(config: Dict[str, Any]) -> str:
+    reward_cfg = config.get("reward", {})
+    return str(reward_cfg.get("mode", "strict"))
+
+
 def _unwrap_ddp(module: torch.nn.Module) -> torch.nn.Module:
     return module.module if isinstance(module, DDP) else module
 
@@ -152,20 +162,24 @@ def _save_checkpoint(
     critic: torch.nn.Module,
     lora_manager: LoRAManager,
     finetune_mode: str,
+    save_backbone: bool = True,
+    save_actor_critic: bool = True,
 ) -> None:
     ckpt_dir = os.path.join(run_dir, "checkpoints")
     os.makedirs(ckpt_dir, exist_ok=True)
     actor_model = _unwrap_ddp(actor)
     critic_model = _unwrap_ddp(critic)
     backbone_model = _unwrap_ddp(backbone.model)
-    torch.save(actor_model.state_dict(), os.path.join(ckpt_dir, "actor.pt"))
-    torch.save(critic_model.state_dict(), os.path.join(ckpt_dir, "critic.pt"))
+    if save_actor_critic:
+        torch.save(actor_model.state_dict(), os.path.join(ckpt_dir, "actor.pt"))
+        torch.save(critic_model.state_dict(), os.path.join(ckpt_dir, "critic.pt"))
 
-    if finetune_mode == "lora":
-        lora_path = os.path.join(ckpt_dir, "backbone_lora")
-        lora_manager.save_lora(backbone_model, lora_path)
-    else:
-        torch.save(backbone_model.state_dict(), os.path.join(ckpt_dir, "backbone.pt"))
+    if save_backbone:
+        if finetune_mode == "lora":
+            lora_path = os.path.join(ckpt_dir, "backbone_lora")
+            lora_manager.save_lora(backbone_model, lora_path)
+        else:
+            torch.save(backbone_model.state_dict(), os.path.join(ckpt_dir, "backbone.pt"))
 
 
 def train(config_path: str, finetune_mode_override: str | None = None) -> None:
@@ -250,7 +264,6 @@ def train(config_path: str, finetune_mode_override: str | None = None) -> None:
     backbone_params = select_finetune_parameters(backbone.model, finetune_mode)
     backbone_opt = torch.optim.AdamW(backbone_params, lr=backbone_lr) if backbone_params else None
 
-    rollout_cfg = dict(config.get("rollout", {}))
     if is_distributed:
         rollout_cfg["seed"] = int(rollout_cfg.get("seed", base_seed)) + rank
     rollout_engine = RolloutEngine(
@@ -269,6 +282,16 @@ def train(config_path: str, finetune_mode_override: str | None = None) -> None:
     critic_steps = int(config.get("update", {}).get("critic_steps", 1))
     actor_steps = int(config.get("update", {}).get("actor_steps", 1))
     backbone_steps = int(config.get("update", {}).get("backbone_steps", 1))
+    logging_cfg = config.get("logging", {})
+    checkpoint_interval = int(logging_cfg.get("checkpoint_interval", 1))
+    save_backbone = bool(logging_cfg.get("save_backbone", True))
+    save_actor_critic = bool(logging_cfg.get("save_actor_critic", True))
+    rollout_batch_size = int(rollout_cfg.get("batch_size", 1))
+    if rollout_batch_size < 1:
+        rollout_batch_size = 1
+    reward_mode = _resolve_reward_mode(config)
+    math_verifier = make_math_verifier(_resolve_math_parser(config), mode=reward_mode)
+    gsm_verifier = make_gsm8k_verifier(mode=reward_mode)
 
     total_episodes = num_iterations * episodes_per_iter
     if is_distributed:
@@ -279,6 +302,29 @@ def train(config_path: str, finetune_mode_override: str | None = None) -> None:
         unit="episode",
         disable=(total_episodes <= 1 or (is_distributed and rank != 0)),
     )
+    reward_sum = 0.0
+    cost_sum = 0.0
+    episode_count = 0
+    last_metrics = None
+
+    def _update_progress() -> None:
+        if is_distributed and rank != 0:
+            return
+        if not hasattr(progress, "set_postfix"):
+            return
+        if episode_count <= 0:
+            return
+        postfix = {
+            "R": f"{(reward_sum / episode_count):.3f}",
+            "C": f"{(cost_sum / episode_count):.3f}",
+        }
+        if last_metrics is not None:
+            postfix.update({
+                "Lq": f"{last_metrics.critic_loss:.3f}",
+                "Lp": f"{last_metrics.actor_loss:.3f}",
+                "Lb": f"{last_metrics.backbone_loss:.3f}",
+            })
+        progress.set_postfix(postfix, refresh=False)
 
     for iteration in range(num_iterations):
         actor.eval()
@@ -286,37 +332,56 @@ def train(config_path: str, finetune_mode_override: str | None = None) -> None:
         if hasattr(backbone, "model"):
             backbone.model.eval()
 
-        for step in range(episodes_per_iter):
-            sample_idx = (iteration * episodes_per_iter + step)
-            if is_distributed:
-                sample_idx = sample_idx * world_size + rank
-            sample = dataset[sample_idx % len(dataset)]
-            task = sample.get("task", "gsm8k")
-            verifier = grade_gsm8k_answer if task == "gsm8k" else grade_math_answer
-            episode = rollout_engine.rollout_episode(
-                sample["prompt"],
-                task=task,
-                verifier=verifier,
-                target_answer=sample.get("target_answer"),
-            )
-            buffer.add_episode(episode)
+        step = 0
+        while step < episodes_per_iter:
+            batch_count = min(rollout_batch_size, episodes_per_iter - step)
+            prompts: List[str] = []
+            tasks: List[str] = []
+            verifiers: List[Any] = []
+            target_answers: List[Optional[str]] = []
+            for offset in range(batch_count):
+                sample_idx = (iteration * episodes_per_iter + step + offset)
+                if is_distributed:
+                    sample_idx = sample_idx * world_size + rank
+                sample = dataset[sample_idx % len(dataset)]
+                task = sample.get("task", "gsm8k")
+                verifier = gsm_verifier if task == "gsm8k" else math_verifier
+                prompts.append(sample["prompt"])
+                tasks.append(task)
+                verifiers.append(verifier)
+                target_answers.append(sample.get("target_answer"))
 
-            if not is_distributed or rank == 0:
-                suffix = f"iter{iteration}_step{step}"
-            else:
-                suffix = f"iter{iteration}_step{step}_rank{rank}"
-            sample_path = os.path.join(run_dir, "samples", f"{suffix}.json")
-            if not is_distributed or rank == 0:
-                with open(sample_path, "w", encoding="utf-8") as handle:
-                    json.dump({
-                        "prompt": episode.prompt,
-                        "final_text": episode.final_text,
-                        "reward": episode.reward,
-                        "cost": episode.cost,
-                    }, handle, indent=2)
-            progress.update(1)
-            # 釋放單次 episode 暫存，避免佔用過多記憶體
-            del episode
+            episodes = rollout_engine.rollout_batch(
+                prompts,
+                tasks=tasks,
+                verifiers=verifiers,
+                target_answers=target_answers,
+            )
+
+            for offset, episode in enumerate(episodes):
+                buffer.add_episode(episode)
+                reward_sum += float(episode.reward)
+                cost_sum += float(episode.cost)
+                episode_count += 1
+                step_idx = step + offset
+                if not is_distributed or rank == 0:
+                    suffix = f"iter{iteration}_step{step_idx}"
+                else:
+                    suffix = f"iter{iteration}_step{step_idx}_rank{rank}"
+                sample_path = os.path.join(run_dir, "samples", f"{suffix}.json")
+                if not is_distributed or rank == 0:
+                    with open(sample_path, "w", encoding="utf-8") as handle:
+                        json.dump({
+                            "prompt": episode.prompt,
+                            "final_text": episode.final_text,
+                            "reward": episode.reward,
+                            "cost": episode.cost,
+                        }, handle, indent=2)
+                progress.update(1)
+                _update_progress()
+                del episode
+
+            step += batch_count
 
         steps = buffer.all_steps()
         actor.train()
@@ -351,8 +416,8 @@ def train(config_path: str, finetune_mode_override: str | None = None) -> None:
                     device,
                     advantage_positive=bool(config.get("losses", {}).get("advantage_positive", True)),
                     advantage_clip=float(config.get("losses", {}).get("advantage_clip", 0.0)),
+                    backward=True,
                 )
-                loss.backward()
                 backbone_opt.step()
 
         metrics = compute_losses(
@@ -364,6 +429,8 @@ def train(config_path: str, finetune_mode_override: str | None = None) -> None:
             device,
             config.get("losses", {}),
         )
+        last_metrics = metrics
+        _update_progress()
         # 釋放 steps 相關暫存並嘗試清理顯存
         del steps
         if torch.cuda.is_available():
@@ -378,7 +445,21 @@ def train(config_path: str, finetune_mode_override: str | None = None) -> None:
                 "episodes": len(buffer),
             })
 
-            _save_checkpoint(run_dir, backbone, actor, critic, lora_manager, finetune_mode)
+            should_save = checkpoint_interval > 0 and (iteration + 1) % checkpoint_interval == 0
+            if should_save and (save_backbone or save_actor_critic):
+                _save_checkpoint(
+                    run_dir,
+                    backbone,
+                    actor,
+                    critic,
+                    lora_manager,
+                    finetune_mode,
+                    save_backbone=save_backbone,
+                    save_actor_critic=save_actor_critic,
+                )
+        should_barrier = checkpoint_interval > 0 and (iteration + 1) % checkpoint_interval == 0
+        if is_distributed and should_barrier:
+            dist.barrier()
 
     progress.close()
     if not is_distributed or rank == 0:

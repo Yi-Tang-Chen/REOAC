@@ -52,6 +52,33 @@ def _get_mdlm_tokenizer(tokenizer_name: str):
     cfg = SimpleNamespace(data=SimpleNamespace(tokenizer_name_or_path=tokenizer_name))
     return dataloader.get_tokenizer(cfg)
 
+
+def _load_hf_tokenizer(tokenizer_name: str, trust_remote_code: bool, fallback_name: str) -> AutoTokenizer:
+    try:
+        return AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=trust_remote_code)
+    except (ValueError, OSError):
+        return AutoTokenizer.from_pretrained(fallback_name)
+
+
+def _ensure_special_tokens(tokenizer: AutoTokenizer) -> None:
+    if tokenizer.bos_token is None and tokenizer.cls_token is not None:
+        tokenizer.bos_token = tokenizer.cls_token
+    if tokenizer.eos_token is None and tokenizer.sep_token is not None:
+        tokenizer.eos_token = tokenizer.sep_token
+    if tokenizer.bos_token is None and tokenizer.eos_token is not None:
+        tokenizer.bos_token = tokenizer.eos_token
+    if tokenizer.eos_token is None and tokenizer.bos_token is not None:
+        tokenizer.eos_token = tokenizer.bos_token
+    if tokenizer.pad_token is None:
+        if tokenizer.eos_token is not None:
+            tokenizer.pad_token = tokenizer.eos_token
+        else:
+            tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+    if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+    if tokenizer.mask_token is None:
+        tokenizer.add_special_tokens({"mask_token": "<mask>"})
+
 @dataclass
 class BackboneOutput:
     logits: torch.Tensor
@@ -70,23 +97,17 @@ class SEDDWrapper(torch.nn.Module):
         self.temperature = float(self.config.get("temperature", 1.0))
 
         tokenizer_source = self.config.get("tokenizer_source", "auto")
-        if tokenizer_source in ("mdlm", "e2d2"):
+        fallback_name = self.config.get("tokenizer_fallback", "gpt2")
+        if tokenizer_source == "mdlm":
             try:
                 self.tokenizer = _get_mdlm_tokenizer(tokenizer_name)
             except Exception:
-                fallback_name = self.config.get("tokenizer_fallback", "gpt2")
-                self.tokenizer = _get_mdlm_tokenizer(fallback_name)
+                self.tokenizer = _load_hf_tokenizer(tokenizer_name, trust_remote_code, fallback_name)
+        elif tokenizer_source == "e2d2":
+            self.tokenizer = _load_hf_tokenizer(tokenizer_name, trust_remote_code, fallback_name)
         else:
-            try:
-                self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=trust_remote_code)
-            except (ValueError, OSError):
-                fallback_name = self.config.get("tokenizer_fallback", "gpt2")
-                self.tokenizer = AutoTokenizer.from_pretrained(fallback_name)
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
-        if self.tokenizer.mask_token is None:
-            self.tokenizer.add_special_tokens({"mask_token": "<mask>"})
+            self.tokenizer = _load_hf_tokenizer(tokenizer_name, trust_remote_code, fallback_name)
+        _ensure_special_tokens(self.tokenizer)
 
         dtype = self.config.get("torch_dtype")
         torch_dtype = None
@@ -140,10 +161,20 @@ class SEDDWrapper(torch.nn.Module):
     def decode(self, ids: List[int]) -> str:
         return self.tokenizer.decode(ids, skip_special_tokens=True)
 
-    def forward(self, x_t: torch.Tensor, timestep: int, cond: Optional[object] = None) -> BackboneOutput:
+    def forward(
+        self,
+        x_t: torch.Tensor,
+        timestep: int,
+        cond: Optional[object] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        context_mask: Optional[torch.Tensor] = None,
+    ) -> BackboneOutput:
         if x_t.dim() == 1:
             x_t = x_t.unsqueeze(0)
-        outputs = self.model(x_t, output_hidden_states=True)
+        model_kwargs = {"output_hidden_states": True}
+        if attention_mask is not None:
+            model_kwargs["attention_mask"] = attention_mask
+        outputs = self.model(x_t, **model_kwargs)
         logits = outputs.logits
         hidden = outputs.hidden_states[-1]
         return BackboneOutput(logits=logits, hidden=hidden)

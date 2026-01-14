@@ -34,7 +34,7 @@ def extract_final_answer(text: str) -> str:
     return text.strip()
 
 
-def grade_gsm8k_answer(prediction: str, metadata: Dict[str, object]) -> float:
+def grade_gsm8k_answer(prediction: str, metadata: Dict[str, object], mode: str = "strict") -> float:
     target = metadata.get("target_answer") if metadata else None
     if target is None:
         return 0.0
@@ -42,6 +42,23 @@ def grade_gsm8k_answer(prediction: str, metadata: Dict[str, object]) -> float:
     target_str = extract_final_answer(str(target))
     pred_num = _parse_number(pred)
     target_num = _parse_number(target_str)
+    mode = str(mode or "strict").lower()
     if pred_num is not None and target_num is not None:
-        return 1.0 if abs(pred_num - target_num) < 1e-4 else 0.0
+        if abs(pred_num - target_num) < 1e-4:
+            return 1.0
+        if mode != "strict":
+            denom = max(abs(target_num), 1.0)
+            return max(0.0, 1.0 - (abs(pred_num - target_num) / denom))
+        return 0.0
+    if mode != "strict":
+        return 0.05 if _NUMBER_PATTERN.search(prediction) else 0.0
     return 1.0 if pred.strip() == target_str.strip() else 0.0
+
+
+def make_gsm8k_verifier(mode: str = "strict"):
+    mode_name = str(mode or "strict").lower()
+
+    def _verifier(prediction: str, metadata: Dict[str, object]) -> float:
+        return grade_gsm8k_answer(prediction, metadata, mode=mode_name)
+
+    return _verifier

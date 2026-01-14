@@ -216,8 +216,10 @@ def aggregate_features(
     answer_text = gen_text or (" ".join(gen_str_tokens))
     if answer_text:
         answer_text = answer_text.strip()
-        if _NUMBER_PATTERN.search(answer_text.split()[-1]):
-            answer_form_valid = 1.0
+        if answer_text:
+            answer_tokens = answer_text.split()
+            if answer_tokens and _NUMBER_PATTERN.search(answer_tokens[-1]):
+                answer_form_valid = 1.0
 
     token_suspect_scores: List[float] = []
     max_logit_entropy = 1.0

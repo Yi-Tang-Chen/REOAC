@@ -29,7 +29,36 @@ fi
 
 export PYTHONPATH="$ROOT_DIR:$ROOT_DIR/third_party:${PYTHONPATH:-}"
 bash "$ROOT_DIR/scripts/load_assets.sh" "$CONFIG_PATH" "" "" "$WORK_DIR"
-NPROC="${REOAC_NPROC:-${SLURM_GPUS_ON_NODE:-}}"
+detect_nproc() {
+  local nproc="${REOAC_NPROC:-}"
+  if [[ -n "$nproc" ]]; then
+    echo "$nproc"
+    return
+  fi
+  if [[ -n "${SLURM_GPUS_ON_NODE:-}" ]]; then
+    echo "${SLURM_GPUS_ON_NODE}"
+    return
+  fi
+  if [[ -n "${SLURM_GPUS_PER_NODE:-}" ]]; then
+    echo "${SLURM_GPUS_PER_NODE%%(*}"
+    return
+  fi
+  if [[ -n "${SLURM_JOB_GPUS:-}" ]]; then
+    local count
+    count=$(awk -F',' '{print NF}' <<< "${SLURM_JOB_GPUS}")
+    echo "$count"
+    return
+  fi
+  if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    local count
+    count=$(awk -F',' '{print NF}' <<< "${CUDA_VISIBLE_DEVICES}")
+    echo "$count"
+    return
+  fi
+  echo ""
+}
+
+NPROC="$(detect_nproc)"
 if [[ -n "${NPROC}" && "${NPROC}" -gt 1 ]]; then
   if ! command -v torchrun >/dev/null 2>&1; then
     echo "torchrun not found; install PyTorch with torchrun or unset REOAC_NPROC." >&2

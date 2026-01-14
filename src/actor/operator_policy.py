@@ -45,3 +45,21 @@ class OperatorPolicy(torch.nn.Module):
             idx = int(torch.multinomial(probs, 1).item())
             return operator_ids[idx]
         raise ValueError(f"Unknown selection mode: {mode}")
+
+    def select_batch(self, operator_ids: List[str], policy_output: PolicyOutput, mode: str = "sample") -> List[str]:
+        if not operator_ids:
+            raise ValueError("No operator ids provided")
+        logits = policy_output.logits.detach()
+        if logits.dim() == 1:
+            logits = logits.unsqueeze(0)
+        if mode == "argmax":
+            idxs = torch.argmax(logits, dim=-1)
+        elif mode == "sample":
+            probs = torch.softmax(logits, dim=-1)
+            idxs = torch.multinomial(probs, 1).squeeze(1)
+        else:
+            raise ValueError(f"Unknown selection mode: {mode}")
+        idx_list = idxs.tolist()
+        if isinstance(idx_list, int):
+            idx_list = [idx_list]
+        return [operator_ids[idx] for idx in idx_list]

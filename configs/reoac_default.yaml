@@ -3,6 +3,9 @@ seed: 0
 logging:
   output_dir: runs
   exp_name: reoac_default
+  checkpoint_interval: 5
+  save_backbone: false
+  save_actor_critic: true
 
 dataset:
   task: gsm8k
@@ -23,6 +26,7 @@ backbone:
   tokenizer_name_or_path: gpt2
   tokenizer_fallback: gpt2
   tokenizer_source: e2d2
+  suppress_load_warnings: true
   max_length: 256
   sample_strategy: argmax
   torch_dtype: null
@@ -36,10 +40,15 @@ rollout:
   gen_len: 64
   branch_steps: [4, 8, 12]
   branch_k: 3
-  selection_mode: argmax
+  selection_mode: sample
   seed: 0
   use_hidden: true
   cost_lambda: 0.01
+  batch_size: 64
+  fast_critic: true
+  fast_operator: false
+  ensure_update: true
+  fallback_operator: O_SCOPE
 
 finetune_mode: full
 lora:
@@ -66,6 +75,12 @@ update:
   actor_steps: 1
   backbone_steps: 1
 
-buffer_size: 800
-num_iterations: 50
-episodes_per_iter: 32
+buffer_size: 200
+num_iterations: 25
+episodes_per_iter: 16
+
+eval:
+  math_parser: latex2sympy2
+
+reward:
+  mode: shaped

@@ -3,6 +3,9 @@ seed: 0
 logging:
   output_dir: runs
   exp_name: mdlm_small_math
+  checkpoint_interval: 5
+  save_backbone: false
+  save_actor_critic: true
 
 dataset:
   task: math
@@ -76,10 +79,12 @@ rollout:
   gen_len: 48
   branch_steps: [2, 5]
   branch_k: 3
-  selection_mode: argmax
+  selection_mode: sample
   seed: 0
   use_hidden: true
   cost_lambda: 0.0
+  ensure_update: true
+  fallback_operator: O_SCOPE
 
 finetune_mode: lora
 lora:
@@ -109,3 +114,9 @@ update:
 buffer_size: 100
 num_iterations: 1
 episodes_per_iter: 2
+
+eval:
+  math_parser: latex2sympy2
+
+reward:
+  mode: shaped

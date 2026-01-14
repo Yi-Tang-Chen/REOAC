@@ -39,7 +39,14 @@ class SimpleBackbone(torch.nn.Module):
     def decode(self, ids: List[int]) -> str:
         return self.tokenizer.decode(ids)
 
-    def forward(self, x_t: torch.Tensor, timestep: int, cond: Optional[object] = None) -> BackboneOutput:
+    def forward(
+        self,
+        x_t: torch.Tensor,
+        timestep: int,
+        cond: Optional[object] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        context_mask: Optional[torch.Tensor] = None,
+    ) -> BackboneOutput:
         if x_t.dim() == 1:
             x_t = x_t.unsqueeze(0)
         hidden = self.embed(x_t)
