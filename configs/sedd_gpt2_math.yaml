@@ -6,10 +6,10 @@ logging:
 
 dataset:
   task: math
-  train_path: data/processed/math_train.jsonl
-  eval_path: data/processed/math_test.jsonl
-  raw_train_path: data/raw/math_train.jsonl
-  raw_eval_path: data/raw/math_test.jsonl
+  train_path: dataset/processed/math_train.jsonl
+  eval_path: dataset/processed/math_test.jsonl
+  raw_train_path: dataset/raw/math_train.jsonl
+  raw_eval_path: dataset/raw/math_test.jsonl
   prompt_field: prompt
   answer_field: target_answer
   allow_toy: false

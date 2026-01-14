@@ -6,10 +6,10 @@ logging:
 
 dataset:
   task: gsm8k
-  train_path: data/processed/gsm8k_train.jsonl
-  eval_path: data/processed/gsm8k_test.jsonl
-  raw_train_path: data/raw/gsm8k_train.jsonl
-  raw_eval_path: data/raw/gsm8k_test.jsonl
+  train_path: dataset/processed/gsm8k_train.jsonl
+  eval_path: dataset/processed/gsm8k_test.jsonl
+  raw_train_path: dataset/raw/gsm8k_train.jsonl
+  raw_eval_path: dataset/raw/gsm8k_test.jsonl
   prompt_field: prompt
   answer_field: target_answer
   allow_toy: false
