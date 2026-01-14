@@ -20,14 +20,16 @@ pip install -r requirements.txt
 資料下載
 --------
 ```bash
+# 會自動建立 data/、runs/ 並下載資料
 # GSM8K
-bash scripts/download_data.sh gsm8k configs/reoac_default.yaml all
+bash scripts/prep_data.sh gsm8k configs/reoac_default.yaml all
 # MATH
-bash scripts/download_data.sh math configs/mdlm_small_math.yaml all
+bash scripts/prep_data.sh math configs/mdlm_small_math.yaml all
 ```
 下載後會生成：
 - `data/processed/gsm8k_{train,test}.jsonl` 或 `math_{train,test}.jsonl`
 - `data/raw/...` 為原始備份
+- `runs/` 供訓練輸出
 
 訓練
 ----
