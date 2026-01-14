@@ -1,4 +1,4 @@
-"""MDLM backbone wrapper using Hugging Face masked LMs."""
+"""MDLM/E2D2 backbone wrapper using Hugging Face masked LMs."""
 
 from __future__ import annotations
 
@@ -18,15 +18,28 @@ from typing import Optional
 _MDLM_DATALOADER = None
 
 
+def _resolve_dataloader_path() -> Path:
+    root = Path(__file__).resolve().parents[2]
+    candidates = [
+        root / "third_party" / "e2d2" / "dataloader.py",
+        root / "third_party" / "mdlm" / "dataloader.py",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return candidates[-1]
+
+
 def _load_mdlm_dataloader():
     global _MDLM_DATALOADER
     if _MDLM_DATALOADER is not None:
         return _MDLM_DATALOADER
-    root = Path(__file__).resolve().parents[2]
-    mdlm_dir = root / "third_party" / "mdlm"
-    dataloader_path = mdlm_dir / "dataloader.py"
+    dataloader_path = _resolve_dataloader_path()
+    mdlm_dir = dataloader_path.parent
     if str(mdlm_dir) not in sys.path:
         sys.path.insert(0, str(mdlm_dir))
+    if not dataloader_path.is_file():
+        raise RuntimeError("Failed to locate dataloader.py in third_party/e2d2 or third_party/mdlm")
     spec = importlib.util.spec_from_file_location("mdlm_dataloader", str(dataloader_path))
     if spec is None or spec.loader is None:
         raise RuntimeError("Failed to locate MDLM dataloader.py")
@@ -52,7 +65,7 @@ class MDLMWrapper(torch.nn.Module):
     def __init__(self, config: Optional[Dict[str, object]] = None) -> None:
         super().__init__()
         self.config = config or {}
-        model_name = self.config.get("model_name_or_path", "kuleshov-group/mdlm-owt")
+        model_name = self.config.get("model_name_or_path", "kuleshov-group/e2d2-owt")
         tokenizer_name = self.config.get("tokenizer_name_or_path", model_name)
         trust_remote_code = bool(self.config.get("trust_remote_code", True))
         self.max_length = int(self.config.get("max_length", 256))
@@ -60,7 +73,7 @@ class MDLMWrapper(torch.nn.Module):
         self.temperature = float(self.config.get("temperature", 1.0))
 
         tokenizer_source = self.config.get("tokenizer_source", "auto")
-        if tokenizer_source == "mdlm":
+        if tokenizer_source in ("mdlm", "e2d2"):
             try:
                 self.tokenizer = _get_mdlm_tokenizer(tokenizer_name)
             except Exception:

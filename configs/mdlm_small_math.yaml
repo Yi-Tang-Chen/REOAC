@@ -26,11 +26,11 @@ dataset:
   dump_math_subjects: false
 
 backbone:
-  name: mdlm
-  model_name_or_path: kuleshov-group/mdlm-owt
+  name: e2d2
+  model_name_or_path: kuleshov-group/e2d2-owt
   tokenizer_name_or_path: gpt2
   tokenizer_fallback: gpt2
-  tokenizer_source: mdlm
+  tokenizer_source: e2d2
   max_length: 256
   sample_strategy: argmax
   torch_dtype: null

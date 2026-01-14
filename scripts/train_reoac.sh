@@ -29,4 +29,13 @@ fi
 
 export PYTHONPATH="$ROOT_DIR:$ROOT_DIR/third_party:${PYTHONPATH:-}"
 bash "$ROOT_DIR/scripts/load_assets.sh" "$CONFIG_PATH" "" "" "$WORK_DIR"
-python -m src.rl.trainer --config "$CONFIG_PATH" --finetune-mode "$FINETUNE_MODE"
+NPROC="${REOAC_NPROC:-${SLURM_GPUS_ON_NODE:-}}"
+if [[ -n "${NPROC}" && "${NPROC}" -gt 1 ]]; then
+  if ! command -v torchrun >/dev/null 2>&1; then
+    echo "torchrun not found; install PyTorch with torchrun or unset REOAC_NPROC." >&2
+    exit 1
+  fi
+  torchrun --nproc_per_node="${NPROC}" -m src.rl.trainer --config "$CONFIG_PATH" --finetune-mode "$FINETUNE_MODE"
+else
+  python -m src.rl.trainer --config "$CONFIG_PATH" --finetune-mode "$FINETUNE_MODE"
+fi

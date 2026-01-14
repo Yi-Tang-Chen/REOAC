@@ -16,6 +16,10 @@ from src.operators.math_heuristics import extract_key_token_mask
 from src.rl.types import EpisodeRecord, RolloutState, RolloutStep
 
 
+def _unwrap_module(module: Any) -> Any:
+    return getattr(module, "module", module)
+
+
 @dataclass
 class RolloutConfig:
     max_steps: int = 8
@@ -75,6 +79,8 @@ class RolloutEngine:
         verifier: Optional[Any] = None,
         target_answer: Optional[str] = None,
     ) -> EpisodeRecord:
+        actor_module = _unwrap_module(self.actor)
+        critic_module = _unwrap_module(self.critic)
         prompt_tokens = self.backbone.tokenize(prompt)
         prompt_len = len(prompt_tokens)
         mask_id = getattr(self.backbone, "mask_id", getattr(self.backbone.tokenizer, "mask_token_id", 0))
@@ -116,7 +122,7 @@ class RolloutEngine:
             gen_logits = backbone_output.logits[0, prompt_len:]
             gen_logits_list = gen_logits.detach().cpu().tolist()
 
-            critic_output = self.critic.evaluate(
+            critic_output = critic_module.evaluate(
                 prompt_tokens=prompt_token_strings,
                 gen_tokens=gen_token_strings,
                 key_prompt_mask=key_mask_aligned,
@@ -136,7 +142,7 @@ class RolloutEngine:
             feature_tensor = torch.tensor(critic_output.feature_vector, device=self.device).unsqueeze(0)
             with torch.no_grad():
                 policy_output = self.actor(feature_tensor)
-            selected_operator = self.actor.select(
+            selected_operator = actor_module.select(
                 self.operator_id_list,
                 policy_output,
                 mode=self.config.selection_mode,

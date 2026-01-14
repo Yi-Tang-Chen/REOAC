@@ -61,7 +61,7 @@ def _load_jsonl(path: str) -> List[Dict[str, Any]]:
 
 def _select_backbone(config: Dict[str, Any]):
     backbone_cfg = config.get("backbone", {})
-    name = str(backbone_cfg.get("name", "mdlm"))
+    name = str(backbone_cfg.get("name", "e2d2"))
     if name == "simple":
         return SimpleBackbone(backbone_cfg)
     if name == "sedd":
