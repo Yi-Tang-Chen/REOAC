@@ -21,6 +21,7 @@ class LoRAConfig:
     alpha: int = 16
     dropout: float = 0.0
     target_modules: List[str] = field(default_factory=list)
+    task_type: str = "FEATURE_EXTRACTION"
 
 
 class LoRAManager:
@@ -40,7 +41,7 @@ class LoRAManager:
             lora_dropout=self.config.dropout,
             target_modules=self.config.target_modules or None,
             bias="none",
-            task_type="MASKED_LM",
+            task_type=self.config.task_type,
         )
         return get_peft_model(model, lora_cfg)
 
