@@ -209,6 +209,10 @@ class MDLMWrapper(torch.nn.Module):
             val = sigma_min
         else:
             t = float(step) / float(T - 1)  # 0 -> 1
+            if t < 0.0:
+                t = 0.0
+            elif t > 1.0:
+                t = 1.0
             if schedule == "linear":
                 # high -> low
                 val = sigma_max + (sigma_min - sigma_max) * t
@@ -365,7 +369,10 @@ class MDLMWrapper(torch.nn.Module):
                 model_kwargs["context_mask"] = context_mask
             outputs = self.model.forward(**model_kwargs)
 
-            logits = outputs.logits[:, :seq_len, :]
+            logits = getattr(outputs, "denoiser_output", None)
+            if logits is None:
+                logits = outputs.logits
+            logits = logits[:, :seq_len, :]
             embeddings = self._e2d2_embed_tokens(input_ids)
             if embeddings is not None:
                 hidden = embeddings[:, :seq_len, :]
@@ -385,7 +392,9 @@ class MDLMWrapper(torch.nn.Module):
             if attention_mask is not None:
                 model_kwargs["attention_mask"] = attention_mask
             outputs = self.model(**model_kwargs)
-            logits = outputs.logits
+            logits = getattr(outputs, "denoiser_output", None)
+            if logits is None:
+                logits = outputs.logits
             hidden = outputs.hidden_states[-1]
         return BackboneOutput(logits=logits, hidden=hidden)
 

@@ -33,6 +33,8 @@ class RolloutConfig:
     cost_lambda: float = 0.0
     batch_size: int = 1
     fast_critic: bool = False
+    gpu_critic: bool = False
+    save_relation: bool = True
     fast_operator: bool = False
     ensure_update: bool = True
     fallback_operator: str = "O_SCOPE"
@@ -65,6 +67,8 @@ class RolloutEngine:
             cost_lambda=float(cfg.get("cost_lambda", 0.0)),
             batch_size=int(cfg.get("batch_size", 1)),
             fast_critic=bool(cfg.get("fast_critic", False)),
+            gpu_critic=bool(cfg.get("gpu_critic", False)),
+            save_relation=bool(cfg.get("save_relation", True)),
             fast_operator=bool(cfg.get("fast_operator", False)),
             ensure_update=bool(cfg.get("ensure_update", True)),
             fallback_operator=str(cfg.get("fallback_operator", "O_SCOPE")),
@@ -323,7 +327,6 @@ class RolloutEngine:
                 continue
 
             gen_token_strings_batch: List[List[str]] = []
-            gen_logits_batch: List[List[List[float]]] = []
             key_masks_batch: List[List[bool]] = []
             for idx in range(batch):
                 prompt_len = prompt_lens[idx]
@@ -335,25 +338,57 @@ class RolloutEngine:
                     key_mask_aligned.extend([False] * (prompt_len - len(key_mask_aligned)))
                 key_masks_batch.append(key_mask_aligned)
 
-                gen_logits = logits[idx, prompt_len:seq_len]
-                gen_logits_batch.append(gen_logits.detach().cpu().tolist())
-
-            critic_outputs = critic_module.evaluate_batch(
-                prompt_tokens_batch=prompt_token_strings_list,
-                gen_tokens_batch=gen_token_strings_batch,
-                key_prompt_mask_batch=key_masks_batch,
-                logits_batch=gen_logits_batch,
-                special_token_ids={
-                    "eos_id": getattr(self.backbone.tokenizer, "eos_token_id", None),
-                    "pad_id": getattr(self.backbone.tokenizer, "pad_token_id", None),
-                    "bos_id": getattr(self.backbone.tokenizer, "bos_token_id", None),
-                    "mask_id": getattr(self.backbone, "mask_id", None),
-                },
-                operator_id_list=self.operator_id_list,
-                gen_texts=None,
-                hidden_vectors=hidden_vectors,
-                device=self.device,
-            )
+            if self.config.gpu_critic:
+                prompt_ids_batch: List[torch.Tensor] = []
+                gen_ids_batch: List[torch.Tensor] = []
+                logits_batch: List[torch.Tensor] = []
+                for idx in range(batch):
+                    prompt_len = prompt_lens[idx]
+                    seq_len = seq_lens[idx]
+                    prompt_ids_batch.append(tokens_tensor[idx, :prompt_len])
+                    gen_ids_batch.append(tokens_tensor[idx, prompt_len:seq_len])
+                    logits_batch.append(logits[idx, prompt_len:seq_len])
+                critic_outputs = critic_module.evaluate_batch_gpu(
+                    prompt_tokens_batch=prompt_token_strings_list,
+                    gen_tokens_batch=gen_token_strings_batch,
+                    prompt_ids_batch=prompt_ids_batch,
+                    gen_ids_batch=gen_ids_batch,
+                    key_prompt_mask_batch=key_masks_batch,
+                    logits_batch=logits_batch,
+                    special_token_ids={
+                        "eos_id": getattr(self.backbone.tokenizer, "eos_token_id", None),
+                        "pad_id": getattr(self.backbone.tokenizer, "pad_token_id", None),
+                        "bos_id": getattr(self.backbone.tokenizer, "bos_token_id", None),
+                        "mask_id": getattr(self.backbone, "mask_id", None),
+                    },
+                    operator_id_list=self.operator_id_list,
+                    hidden_vectors=hidden_vectors,
+                    device=self.device,
+                    return_relation=self.config.save_relation,
+                )
+            else:
+                gen_logits_batch: List[List[List[float]]] = []
+                for idx in range(batch):
+                    prompt_len = prompt_lens[idx]
+                    seq_len = seq_lens[idx]
+                    gen_logits = logits[idx, prompt_len:seq_len]
+                    gen_logits_batch.append(gen_logits.detach().cpu().tolist())
+                critic_outputs = critic_module.evaluate_batch(
+                    prompt_tokens_batch=prompt_token_strings_list,
+                    gen_tokens_batch=gen_token_strings_batch,
+                    key_prompt_mask_batch=key_masks_batch,
+                    logits_batch=gen_logits_batch,
+                    special_token_ids={
+                        "eos_id": getattr(self.backbone.tokenizer, "eos_token_id", None),
+                        "pad_id": getattr(self.backbone.tokenizer, "pad_token_id", None),
+                        "bos_id": getattr(self.backbone.tokenizer, "bos_token_id", None),
+                        "mask_id": getattr(self.backbone, "mask_id", None),
+                    },
+                    operator_id_list=self.operator_id_list,
+                    gen_texts=None,
+                    hidden_vectors=hidden_vectors,
+                    device=self.device,
+                )
 
             feature_vectors = [output.feature_vector for output in critic_outputs]
             feature_tensor = torch.tensor(feature_vectors, device=self.device, dtype=torch.float32)

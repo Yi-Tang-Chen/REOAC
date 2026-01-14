@@ -72,6 +72,17 @@ def compute_backbone_loss(
     advantage_clip: float = 0.0,
     backward: bool = False,
 ) -> torch.Tensor:
+    def _zero_loss_from_backbone(model: torch.nn.Module) -> torch.Tensor:
+        zero: torch.Tensor | None = None
+        for param in model.parameters():
+            if not param.requires_grad:
+                continue
+            contrib = param.sum() * 0.0
+            zero = contrib if zero is None else (zero + contrib)
+        if zero is None:
+            return torch.tensor(0.0, device=device)
+        return zero
+
     total_count = 0
     for step in steps:
         if not step.decision.update_positions or not step.target_tokens:
@@ -81,6 +92,8 @@ def compute_backbone_loss(
                 total_count += 1
 
     if total_count == 0:
+        if backward:
+            _zero_loss_from_backbone(backbone).backward()
         return torch.tensor(0.0, device=device)
 
     if not backward:

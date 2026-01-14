@@ -370,12 +370,19 @@ def train(config_path: str, finetune_mode_override: str | None = None) -> None:
                     suffix = f"iter{iteration}_step{step_idx}_rank{rank}"
                 sample_path = os.path.join(run_dir, "samples", f"{suffix}.json")
                 if not is_distributed or rank == 0:
+                    last_step = episode.steps[-1] if episode.steps else None
+                    relation = last_step.relation if last_step is not None else None
+                    feature_vector = last_step.feature_vector if last_step is not None else None
+                    operator_id = last_step.decision.operator_id if last_step is not None else None
                     with open(sample_path, "w", encoding="utf-8") as handle:
                         json.dump({
                             "prompt": episode.prompt,
                             "final_text": episode.final_text,
                             "reward": episode.reward,
                             "cost": episode.cost,
+                            "operator_id": operator_id,
+                            "feature_vector": feature_vector,
+                            "relation": relation,
                         }, handle, indent=2)
                 progress.update(1)
                 _update_progress()

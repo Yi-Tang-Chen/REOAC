@@ -53,7 +53,7 @@ def main() -> None:
 
     with open(args.output, "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["x", "y"])
+        writer.writerow(["principal_component_1", "principal_component_2"])
         for point in projected:
             writer.writerow([f"{point[0]:.6f}", f"{point[1]:.6f}"])
 

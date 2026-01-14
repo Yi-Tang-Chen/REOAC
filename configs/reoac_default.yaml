@@ -28,27 +28,29 @@ backbone:
   tokenizer_source: e2d2
   suppress_load_warnings: true
   max_length: 256
-  sample_strategy: argmax
+  sample_strategy: sample
   torch_dtype: null
-  num_steps: 8           
+  num_steps: 512
   sigma_schedule: cosine # or linear
   sigma_max: 1.0
   sigma_min: 0.0
 
 rollout:
-  max_steps: 32
-  gen_len: 64
-  branch_steps: [4, 8, 12]
+  max_steps: 512
+  gen_len: 128
+  branch_steps: [8, 16, 24, 32, 40, 48, 56]
   branch_k: 3
   selection_mode: sample
   seed: 0
   use_hidden: true
   cost_lambda: 0.01
-  batch_size: 64
-  fast_critic: true
+  batch_size: 16
+  fast_critic: false
+  gpu_critic: true
+  save_relation: true
   fast_operator: false
   ensure_update: true
-  fallback_operator: O_SCOPE
+  fallback_operator: O_FAST
 
 finetune_mode: full
 lora:
@@ -60,10 +62,10 @@ lora:
 losses:
   critic_weight: 1.0
   actor_weight: 1.0
-  backbone_weight: 1.0
-  actor_temperature: 1.0
+  backbone_weight: 1.1
+  actor_temperature: 1.1
   advantage_positive: true
-  advantage_clip: 0.0
+  advantage_clip: 0.1
 
 optim:
   actor_lr: 1.0e-4
@@ -75,9 +77,9 @@ update:
   actor_steps: 1
   backbone_steps: 1
 
-buffer_size: 200
+buffer_size: 100
 num_iterations: 25
-episodes_per_iter: 16
+episodes_per_iter: 8
 
 eval:
   math_parser: latex2sympy2

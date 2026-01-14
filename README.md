@@ -8,6 +8,8 @@ REOAC 快速指南
 - **Critic (MLP Q head)**：同 Actor 輸入，輸出 5 個 operator Q 值，參數量數十萬級。
 :::
 
+進一步的架構與理論說明請看 `architecture.md`。
+
 環境與安裝
 ----------
 ```bash
@@ -83,6 +85,79 @@ REOAC_NPROC=4 bash scripts/train_reoac.sh configs/reoac_default.yaml lora
 - **fast_operator**：在 fast_critic 下進一步跳過 token 字串解析（更快但改動更大）。
 - **ensure_update / fallback_operator**：若選到的 operator 沒有任何 update_positions，會自動改成 fallback（避免生成一直是 `<mask>`）。
 
+Loss / Viz 輸出
+---------------
+訓練會把 loss 與 sample 寫到 `runs/<exp>/<timestamp>/`：
+- `metrics.jsonl`：每 iteration 一筆，欄位包含 `iteration`、`critic_loss`、`actor_loss`、`backbone_loss`、`total_loss`、`episodes`。  
+- `samples/*.json`：每個 episode 會存 `prompt/final_text/reward/cost`。若 `fast_critic=false`，還會額外存 `operator_id`、`feature_vector`、`relation`（可做 viz）。
+
+快速畫 loss 曲線（需安裝 matplotlib）：
+```bash
+python - <<'PY'
+import json
+import matplotlib.pyplot as plt
+
+path = "runs/<exp>/<timestamp>/metrics.jsonl"
+iters, lq, lp, lb, lt = [], [], [], [], []
+with open(path, "r", encoding="utf-8") as f:
+    for line in f:
+        row = json.loads(line)
+        iters.append(row["iteration"])
+        lq.append(row["critic_loss"])
+        lp.append(row["actor_loss"])
+        lb.append(row["backbone_loss"])
+        lt.append(row["total_loss"])
+plt.plot(iters, lq, label="critic")
+plt.plot(iters, lp, label="actor")
+plt.plot(iters, lb, label="backbone")
+plt.plot(iters, lt, label="total")
+plt.legend()
+plt.xlabel("iteration")
+plt.ylabel("loss")
+plt.tight_layout()
+plt.savefig("runs/<exp>/<timestamp>/viz/loss.png", dpi=200)
+PY
+```
+
+能量圖 / embedding 也可從 sample 產生：
+```bash
+# 產生 relation 能量圖（CSV）
+bash scripts/viz_energy.sh runs/<exp>/<timestamp>/samples/iterX_stepY.json runs/<exp>/<timestamp>/viz
+
+# 將 feature_vector 投影到 2D（CSV）
+python - <<'PY'
+import json, glob
+paths = glob.glob("runs/<exp>/<timestamp>/samples/*.json")
+feats = []
+for p in paths:
+    d = json.load(open(p))
+    if d.get("feature_vector"):
+        feats.append(d["feature_vector"])
+json.dump({"features": feats}, open("runs/<exp>/<timestamp>/viz/features.json","w"))
+PY
+python -m src.viz.embedding_proj \
+  --input runs/<exp>/<timestamp>/viz/features.json \
+  --output runs/<exp>/<timestamp>/viz/embedding_proj.csv
+```
+
+注意：`relation/feature_vector` 只有在 `fast_critic=false` 時才會有；建議搭配 `rollout.gpu_critic=true` 走 GPU 計算。
+
+一鍵產圖（energy map / embedding / loss）
+-----------------------------------------
+```bash
+bash scripts/viz_run.sh runs/<exp>/<timestamp>
+```
+可選擇指定 sample（用來產生 energy map）：
+```bash
+bash scripts/viz_run.sh runs/<exp>/<timestamp> runs/<exp>/<timestamp>/samples/iterX_stepY.json
+```
+會輸出至 `runs/<exp>/<timestamp>/viz/`：
+- `energy_map.csv` / `energy_map.png`（若有 relation）
+- `embedding_proj.csv` / `embedding_proj.png`
+- `loss.png`（若有 metrics.jsonl）
+
+若系統沒有 `matplotlib`，PNG 會跳過但 CSV 仍會產出。
+
 推論 / 評估
 -----------
 ```bash
@@ -91,6 +166,14 @@ bash scripts/eval_gsm8k.sh configs/reoac_default.yaml runs/<exp>/<ts>/checkpoint
 bash scripts/eval_math.sh  configs/mdlm_small_math.yaml runs/<exp>/<ts>/checkpoints
 ```
 結果輸出至 `runs/eval_gsm8k.json` / `runs/eval_math.json`。
+
+SLURM 推論腳本
+--------------
+新增 `runs/slurm/slurm_inference_reoac.batch`，可在叢集上跑 eval：
+```bash
+sbatch runs/slurm/slurm_inference_reoac.batch configs/reoac_default.yaml runs/<exp>/<ts>/checkpoints
+```
+預設會跑 GSM8K eval；若要改成 MATH，請在 script 內改成 `scripts/eval_math.sh`。
 
 評估標準（與訓練一致）
 ----------------------
@@ -112,8 +195,9 @@ bash scripts/eval_math.sh  configs/mdlm_small_math.yaml runs/<exp>/<ts>/checkpoi
 ------------------------
 - **資料**：`dataset.train_path / eval_path`
 - **Rollout**：`max_steps`、`gen_len`、`branch_steps`、`branch_k`、`cost_lambda`
-- **Batch / 速度**：`rollout.batch_size`、`rollout.fast_critic`、`rollout.fast_operator`
+- **Batch / 速度**：`rollout.batch_size`、`rollout.fast_critic`、`rollout.gpu_critic`、`rollout.fast_operator`
 - **穩定性**：`rollout.ensure_update`、`rollout.fallback_operator`
+- **Viz 輸出**：`rollout.save_relation`（寫入 relation/feature）
 - **LoRA / Full**：`finetune_mode`（`lora` or `full`）；`lora.r/alpha/dropout/target_modules`
 - **學習率**：`optim.actor_lr / critic_lr / backbone_lr`
 - **更新步數**：`update.critic_steps / actor_steps / backbone_steps`
