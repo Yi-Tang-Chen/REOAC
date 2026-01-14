@@ -1,0 +1,6 @@
+[submodule "third_party/mdlm"]
+	path = third_party/mdlm
+	url = https://github.com/kuleshov-group/mdlm
+[submodule "third_party/sedd"]
+	path = third_party/sedd
+	url = https://github.com/louaaron/Score-Entropy-Discrete-Diffusion

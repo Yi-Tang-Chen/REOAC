@@ -1,0 +1,111 @@
+seed: 0
+
+logging:
+  output_dir: runs
+  exp_name: sedd_gpt2_math
+
+dataset:
+  task: math
+  train_path: data/processed/math_train.jsonl
+  eval_path: data/processed/math_test.jsonl
+  raw_train_path: data/raw/math_train.jsonl
+  raw_eval_path: data/raw/math_test.jsonl
+  prompt_field: prompt
+  answer_field: target_answer
+  allow_toy: false
+  download_on_missing: false
+  hf_dataset: EleutherAI/hendrycks_math
+  math_subjects:
+    - algebra
+    - counting_and_probability
+    - geometry
+    - intermediate_algebra
+    - number_theory
+    - prealgebra
+    - precalculus
+  dump_math_subjects: false
+
+backbone:
+  name: sedd
+  model_name_or_path: kuleshov-group/sedd-owt
+  tokenizer_name_or_path: gpt2
+  tokenizer_fallback: gpt2
+  tokenizer_source: auto
+  max_length: 256
+  sample_strategy: argmax
+  torch_dtype: null
+
+operators:
+  - id: O_NUM
+    description: Focus updates on numeric tokens
+    params:
+      max_tokens: 16
+    base_cost: 1.2
+  - id: O_OP
+    description: Focus updates near operators and units
+    params:
+      max_tokens: 16
+    base_cost: 1.1
+  - id: O_SCOPE
+    description: Local scope updates
+    params:
+      scope_len: 32
+    base_cost: 1.0
+  - id: O_BRANCH
+    description: Branch counterfactuals
+    params:
+      branch_depth: 1
+    base_cost: 2.0
+  - id: O_FAST
+    description: Aggressive convergence
+    params:
+      scope_len: 64
+      step_scale: 1.5
+    base_cost: 1.5
+
+critic:
+  hidden_size: 96
+  heads: 4
+
+actor:
+  hidden_size: 96
+  entropy_weight: 0.01
+
+rollout:
+  max_steps: 8
+  gen_len: 48
+  branch_steps: [2, 5]
+  branch_k: 3
+  selection_mode: argmax
+  seed: 0
+  use_hidden: true
+  cost_lambda: 0.0
+
+finetune_mode: lora
+lora:
+  r: 8
+  alpha: 16
+  dropout: 0.0
+  target_modules: []
+
+losses:
+  critic_weight: 1.0
+  actor_weight: 1.0
+  backbone_weight: 1.0
+  actor_temperature: 1.0
+  advantage_positive: true
+  advantage_clip: 0.0
+
+optim:
+  actor_lr: 1.0e-4
+  critic_lr: 1.0e-4
+  backbone_lr: 1.0e-5
+
+update:
+  critic_steps: 1
+  actor_steps: 1
+  backbone_steps: 1
+
+buffer_size: 100
+num_iterations: 1
+episodes_per_iter: 2

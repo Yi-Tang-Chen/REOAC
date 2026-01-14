@@ -1,0 +1,71 @@
+seed: 0
+
+logging:
+  output_dir: runs
+  exp_name: reoac_default
+
+dataset:
+  task: gsm8k
+  train_path: data/processed/gsm8k_train.jsonl
+  eval_path: data/processed/gsm8k_test.jsonl
+  raw_train_path: data/raw/gsm8k_train.jsonl
+  raw_eval_path: data/raw/gsm8k_test.jsonl
+  prompt_field: prompt
+  answer_field: target_answer
+  allow_toy: false
+  download_on_missing: false
+  hf_dataset: openai/gsm8k
+  hf_config: main
+
+backbone:
+  name: mdlm
+  model_name_or_path: kuleshov-group/mdlm-owt
+  tokenizer_name_or_path: gpt2
+  tokenizer_fallback: gpt2
+  tokenizer_source: mdlm
+  max_length: 256
+  sample_strategy: argmax
+  torch_dtype: null
+  num_steps: 8           
+  sigma_schedule: cosine # or linear
+  sigma_max: 1.0
+  sigma_min: 0.0
+
+rollout:
+  max_steps: 32
+  gen_len: 64
+  branch_steps: [4, 8, 12]
+  branch_k: 3
+  selection_mode: argmax
+  seed: 0
+  use_hidden: true
+  cost_lambda: 0.01
+
+finetune_mode: full
+lora:
+  r: 8
+  alpha: 16
+  dropout: 0.0
+  target_modules: []
+
+losses:
+  critic_weight: 1.0
+  actor_weight: 1.0
+  backbone_weight: 1.0
+  actor_temperature: 1.0
+  advantage_positive: true
+  advantage_clip: 0.0
+
+optim:
+  actor_lr: 1.0e-4
+  critic_lr: 1.0e-4
+  backbone_lr: 5.0e-6
+
+update:
+  critic_steps: 2
+  actor_steps: 1
+  backbone_steps: 1
+
+buffer_size: 800
+num_iterations: 50
+episodes_per_iter: 32

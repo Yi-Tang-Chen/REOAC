@@ -1,0 +1,10 @@
+pyyaml>=6.0
+tqdm>=4.66
+numpy>=1.24
+sympy>=1.12
+datasets>=2.18
+torch>=2.1
+transformers>=4.38
+peft>=0.9
+einops>=0.7
+# flash-attn requires CUDA + matching torch; install manually if using MDLM HF checkpoints.
